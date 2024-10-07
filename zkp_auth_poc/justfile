@@ -1,0 +1,116 @@
+set dotenv-load := true
+
+export SERVER_ADDRESS := '127.0.0.1:50051'
+export TF_VAR_AWS_ACCESS_KEY_ID := env('AWS_ACCESS_KEY_ID')
+export TF_VAR_AWS_SECRET_ACCESS_KEY := env('AWS_SECRET_ACCESS_KEY')
+export TF_VAR_AWS_REGION := env('AWS_REGION')
+export DOCKER_DEFAULT_PLATFORM := 'linux/amd64'
+
+SSH_KEY_PATH := "~/.ssh/id_zkp_terraform"
+TERRAFORM_DIR := "infra_terraform"
+
+_default:
+  @just --list --unsorted
+
+# Run tests
+test:
+    cargo test
+
+# Build/ rebuild entire project (regenerates the proto file)
+cargo-clean-build:
+    cargo clean
+    cargo build
+
+# Build a release
+cargo-release:
+    cargo build --release
+
+# Run local zkp_server binary
+cargo-server:
+    cargo run --bin zkp_server
+
+# Run local zkp_client binary
+cargo-client:
+    cargo run --bin zkp_client
+
+# Spin up local zkp_server and zkp_client containers
+local-up:
+    docker compose up -d --build --no-deps
+    docker attach $(docker ps -qf "name=zkp_client")
+    echo "Press any key to start authentication, or 'q' to quit"
+
+# Reverse 'local-up', takes down the containers
+local-down:
+    docker compose down
+
+# Provision zkp_server and zkp_client on AWS
+aws-up: _create-container-registry _build-containers _push-to-aws-registry _generate-ssh-keys _deploy-aws-resources
+
+# Reverse 'aws-up', takes down all, i.e. AWS machines and registry
+aws-down: _destroy-container-registry
+    #!/usr/bin/env bash
+    export TF_VAR_SSH_PUB=$(cat {{SSH_KEY_PATH}}.pub) && \
+    export TF_VAR_ZKP_REPO_URL="" && \
+    cd {{TERRAFORM_DIR}}/zkp_server_and_client && \
+    terraform destroy -auto-approve && \
+    if [ -f .envrc ]; then rm .envrc; fi
+
+# Usable after 'aws-up' completed. Ssh into server: 'just ssh' or client: 'just ssh client'
+ssh machine='server':
+    #!/usr/bin/env bash
+    source {{TERRAFORM_DIR}}/zkp_server_and_client/.envrc
+    if [ {{machine}} = 'server' ]; then
+        ip=$ZKP_SERVER_IP
+    elif [ {{machine}} = 'client' ]; then
+        ip=$ZKP_CLIENT_IP
+    else
+        echo "Invalid machine type. Use 'server' or 'client'."
+        exit 1
+    fi
+    ssh -o StrictHostKeyChecking=no -i {{SSH_KEY_PATH}} ubuntu@$ip
+
+_generate-ssh-keys:
+    #!/usr/bin/env bash
+    if [ ! -f {{SSH_KEY_PATH}} ]; then
+        ssh-keygen -t rsa -b 4096 -f {{SSH_KEY_PATH}} -N ""
+    else
+        echo "SSH keys already exist at {{SSH_KEY_PATH}}"
+    fi
+
+_create-container-registry:
+    #!/usr/bin/env bash
+    cd {{TERRAFORM_DIR}}/container_registry && \
+    terraform init && \
+    terraform apply -auto-approve && \
+    echo "export TF_VAR_ZKP_REPO_URL=$(terraform output -raw zkp_repo_url)" > .envrc
+
+_destroy-container-registry:
+    #!/usr/bin/env bash
+    cd {{TERRAFORM_DIR}}/container_registry && \
+    terraform destroy -auto-approve && \
+    if [ -f .envrc ]; then rm .envrc; fi
+
+_build-containers:
+    docker build -t zkp_server -f ./Dockerfile.zkp_server .
+    docker build -t zkp_client -f ./Dockerfile.zkp_client .
+    docker tag zkp_server zkp_server:cache
+    docker tag zkp_client zkp_client:cache
+
+_push-to-aws-registry:
+    #!/usr/bin/env bash
+    ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    ECR_REPO="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/zkp-repo"
+    aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPO
+    docker tag zkp_server:latest $ECR_REPO:zkp_server
+    docker tag zkp_client:latest $ECR_REPO:zkp_client
+    docker push $ECR_REPO:zkp_server
+    docker push $ECR_REPO:zkp_client
+
+_deploy-aws-resources:
+    #!/usr/bin/env bash
+    source {{TERRAFORM_DIR}}/container_registry/.envrc && \
+    cd {{TERRAFORM_DIR}}/zkp_server_and_client && \
+    terraform init && \
+    terraform apply -auto-approve && \
+    echo "export ZKP_SERVER_IP=$(terraform output -raw zkp_server_public_ip)" > .envrc && \
+    echo "export ZKP_CLIENT_IP=$(terraform output -raw zkp_client_public_ip)" >> .envrc

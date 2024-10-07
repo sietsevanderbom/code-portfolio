@@ -1,0 +1,48 @@
+#cloud-config
+package_update: false
+package_upgrade: false
+groups:
+  - docker
+manage_etc_hosts: true
+users:
+  - name: ubuntu
+    ssh_authorized_keys:
+      - ${ssh_pub}
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: sudo, users, docker
+    shell: /bin/bash
+packages:
+  - docker.io
+  - curl
+  - unzip
+write_files:
+  - path: /home/ubuntu/.aws/credentials
+    content: |
+      [default]
+      aws_access_key_id=${aws_access_key_id}
+      aws_secret_access_key=${aws_secret_access_key}
+runcmd:
+  - export AWS_ACCESS_KEY_ID=${aws_access_key_id}
+  - export AWS_SECRET_ACCESS_KEY=${aws_secret_access_key}
+  - export AWS_REGION=${aws_region}
+  - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  - unzip awscliv2.zip
+  - sudo ./aws/install
+  - sudo usermod -aG docker $USER
+  - sudo systemctl enable docker
+  - |
+    # Retry logic to ensure Docker service is running
+    for i in {1..5}; do
+      sudo systemctl start docker && break || sleep 10;
+    done
+  - |
+    # Check if Docker service is active
+    if ! sudo systemctl is-active --quiet docker; then
+      echo "Docker service failed to start" >&2
+      exit 1
+    fi
+  - echo "***** before docker login"
+  - aws ecr get-login-password --region ${aws_region} | sudo docker login --username AWS --password-stdin ${repo_url}
+  - echo "***** after docker login"
+  - sudo docker pull ${repo_url}:zkp_server
+  - sudo docker run -d --name zkp_server -p 50051:50051 ${repo_url}:zkp_server

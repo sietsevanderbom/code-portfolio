@@ -1,0 +1,28 @@
+services:
+  zkp_server:
+    build:
+      context: .
+      dockerfile: Dockerfile.zkp_server
+    networks:
+      - zkp_net
+    ports:
+      - "50051:50051"
+    environment:
+      - SERVER_ADDRESS=0.0.0.0:50051
+
+  zkp_client:
+    build:
+      context: .
+      dockerfile: Dockerfile.zkp_client
+    stdin_open: true
+    tty: true
+    networks:
+      - zkp_net
+    depends_on:
+      - zkp_server
+    environment:
+      - SERVER_ADDRESS=zkp_server:50051
+
+networks:
+  zkp_net:
+    driver: bridge

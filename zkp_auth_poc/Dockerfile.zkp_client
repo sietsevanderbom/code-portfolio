@@ -1,0 +1,12 @@
+FROM rust:slim-buster AS builder
+WORKDIR /zkp_client
+COPY . .
+RUN apt update && \
+    apt install -y protobuf-compiler && \
+    cargo build --release --bin zkp_client
+
+FROM debian:bullseye-slim
+RUN apt update && apt install -y ca-certificates
+WORKDIR /zkp_client
+COPY --from=builder /zkp_client/target/release/zkp_client /usr/local/bin/zkp_client
+ENTRYPOINT ["/usr/local/bin/zkp_client"]

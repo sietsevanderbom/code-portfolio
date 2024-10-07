@@ -1,0 +1,16 @@
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+
+# Local terraform files
+.plan
+
+# Crash log files
+crash.*.log
+
+# temp stateful env var files
+container_registry/.envrc
+zkp_server_and_client/.envrc

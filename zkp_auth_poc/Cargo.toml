@@ -1,0 +1,26 @@
+[package]
+name = "zkp_auth_poc"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zkp_server"
+path = "src/zkp_server.rs"
+
+[[bin]]
+name = "zkp_client"
+path = "src/zkp_client.rs"
+
+[dependencies]
+tonic = "0.12.2"
+prost = "0.13.2"
+tokio = { version = "1.40", features = ["full"] }
+num-bigint = {version = "0.4", features = ["rand"] }
+num-traits = "0.2"
+num-primes = "0.3"
+rand = "0.8"
+hex = "0.4"
+proceed = { version = "0.1", features = ["term"] }
+
+[build-dependencies]
+tonic-build = "0.12.2"
